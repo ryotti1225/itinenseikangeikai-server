@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <memory>
 #include<deque>
+#include<string>
 
 using boost::asio::ip::tcp;
 using namespace std;
