@@ -1,75 +1,67 @@
 ﻿#include <boost/asio.hpp>
 #include <iostream>
-#include <memory>
+#include <string>
+#include <thread>
+#include <vector> // メッセージ履歴を保存するためのベクター
 
 using boost::asio::ip::tcp;
 
-class Session : public std::enable_shared_from_this<Session> {
-public:
-    Session(tcp::socket socket) : socket_(std::move(socket)) {}
+// メッセージ履歴を保存するグローバル変数
+std::vector<std::string> message_history;
 
-    void start() {
-        do_read();
+// メッセージ履歴を表示する関数
+void display_message_history() {
+    std::cout << "\n--- Message History ---" << std::endl;
+    for (const auto& message : message_history) {
+        std::cout << message << std::endl;
     }
+    std::cout << "------------------------\n" << std::endl;
+}
 
-private:
-    void do_read() {
-        auto self(shared_from_this());
-        socket_.async_read_some(
-            boost::asio::buffer(data_),
-            [this, self](boost::system::error_code ec, std::size_t length) {
-                if (!ec) {
-                    std::cout << "Received: " << std::string(data_, length) << std::endl;
-                    do_write(length);
-                }
-            });
+void handle_client(tcp::socket socket) {
+    try {
+        for (;;) {
+            char data[1024];
+            std::memset(data, 0, sizeof(data));
+
+            // クライアントからのメッセージを受信
+            size_t length = socket.read_some(boost::asio::buffer(data));
+            std::string client_message = std::string(data, length);
+
+            // 受信したメッセージを履歴に追加
+            message_history.push_back("Client: " + client_message);
+
+            // 履歴を表示
+            display_message_history();
+
+            // サーバーからの返信（固定メッセージを送信）
+            std::string server_response = "Message received: " + client_message;
+            message_history.push_back("Server: " + server_response); // サーバーの返信も履歴に追加
+            boost::asio::write(socket, boost::asio::buffer(server_response));
+        }
     }
-
-    void do_write(std::size_t length) {
-        auto self(shared_from_this());
-        boost::asio::async_write(
-            socket_,
-            boost::asio::buffer(data_, length),
-            [this, self](boost::system::error_code ec, std::size_t /*length*/) {
-                if (!ec) {
-                    do_read();
-                }
-            });
+    catch (std::exception& e) {
+        std::cerr << "Connection closed: " << e.what() << std::endl;
     }
-
-    tcp::socket socket_;
-    char data_[1024];
-};
-
-class Server {
-public:
-    Server(boost::asio::io_context& io_context, short port)
-        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port)) {
-        do_accept();
-    }
-
-private:
-    void do_accept() {
-        acceptor_.async_accept(
-            [this](boost::system::error_code ec, tcp::socket socket) {
-                if (!ec) {
-                    std::make_shared<Session>(std::move(socket))->start();
-                }
-                do_accept();
-            });
-    }
-
-    tcp::acceptor acceptor_;
-};
+}
 
 int main() {
     try {
         boost::asio::io_context io_context;
-        Server server(io_context, 12345);
 
-        std::cout << "Server is running on port 12345..." << std::endl;
-        io_context.run();
-    } catch (std::exception& e) {
+        // サーバーソケットの準備
+        tcp::acceptor acceptor(io_context, tcp::endpoint(tcp::v4(), 12345));
+        std::cout << "Server is running. Waiting for a connection..." << std::endl;
+
+        // クライアント接続を待つ
+        tcp::socket socket(io_context);
+        acceptor.accept(socket);
+        std::cout << "Client connected!" << std::endl;
+
+        // クライアントとの通信を処理
+        handle_client(std::move(socket));
+    }
+    catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
     }
 
